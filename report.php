@@ -1,13 +1,18 @@
 <?php
-// File untuk melihat laporan pengambilan dan pengumpulan laptop
-$isAdmin = true;
+// Include database connection
+require_once 'config.php';
 
+// Function to format date
+function formatDate($date) {
+    $timestamp = strtotime($date);
+    return date('d F Y', $timestamp);
+}
 
-function getDailyReport($date = null) {
-    if ($date === null) {
-        $date = date('Y-m-d');
-    }
-    
+// Get requested date or use today
+$requestDate = $_GET['date'] ?? date('Y-m-d');
+
+// Get daily report data from database
+function getDailyReport($conn, $date) {
     $report = [
         'total_diambil' => 0,
         'total_dikumpulkan' => 0, 
@@ -16,65 +21,80 @@ function getDailyReport($date = null) {
         'detail' => []
     ];
     
-    if (file_exists('laptop_log.txt')) {
-        $lines = file('laptop_log.txt', FILE_IGNORE_NEW_LINES);
-        foreach ($lines as $line) {
-            $data = explode('|', $line);
-            if (count($data) >= 5) {
-                $logDate = substr($data[0], 0, 10);
-                
-                if ($logDate == $date) {
-                    $report['detail'][] = [
-                        'time' => $data[0],
-                        'action' => $data[1],
-                        'nis' => $data[2],
-                        'name' => $data[3],
-                        'class' => $data[4]
-                    ];
-
-                    if ($data[1] == 'Ambil') {
-                        $report['total_diambil']++;
-                    } elseif ($data[1] == 'Kumpul') {
-                        $report['total_dikumpulkan']++;
-                    } elseif ($data[1] == 'Kumpul (Terlambat)') {
-                        $report['total_dikumpulkan']++;
-                        $report['total_terlambat']++;
-                    }
-                }
-            }
-        }
+    // Get daily statistics
+    $sql_stats = "SELECT 
+                    SUM(CASE WHEN action = 'ambil' THEN 1 ELSE 0 END) as total_diambil,
+                    SUM(CASE WHEN action = 'kumpul' THEN 1 ELSE 0 END) as total_dikumpulkan,
+                    SUM(CASE WHEN action = 'kumpul' AND status = 'terlambat' THEN 1 ELSE 0 END) as total_terlambat
+                FROM laptop_transactions 
+                WHERE DATE(transaction_time) = ?";
+    
+    $stmt_stats = mysqli_prepare($conn, $sql_stats);
+    mysqli_stmt_bind_param($stmt_stats, "s", $date);
+    mysqli_stmt_execute($stmt_stats);
+    $result_stats = mysqli_stmt_get_result($stmt_stats);
+    
+    if ($row_stats = mysqli_fetch_assoc($result_stats)) {
+        $report['total_diambil'] = $row_stats['total_diambil'] ?? 0;
+        $report['total_dikumpulkan'] = $row_stats['total_dikumpulkan'] ?? 0;
+        $report['total_terlambat'] = $row_stats['total_terlambat'] ?? 0;
     }
     
-    if (file_exists('laptop_status.txt')) {
-        $lines = file('laptop_status.txt', FILE_IGNORE_NEW_LINES);
-        foreach ($lines as $line) {
-            $data = explode('|', $line);
-            if (count($data) >= 6 && $data[3] == 'Diambil') {
-                $takeDate = substr($data[4], 0, 10);
-                if ($takeDate == $date) {
-                    $report['belum_dikumpulkan'][] = [
-                        'nis' => $data[0],
-                        'name' => $data[1],
-                        'class' => $data[2],
-                        'take_time' => $data[4]
-                    ];
-                }
-            }
+    // Get laptops not returned yet
+    $sql_not_returned = "SELECT s.nis, s.name, s.class, 
+                        DATE_FORMAT(ls.take_time, '%Y-%m-%d %H:%i:%s') as take_time
+                        FROM laptop_status ls
+                        JOIN students s ON ls.nis = s.nis
+                        WHERE ls.status = 'diambil' 
+                        AND DATE(ls.take_time) = ?";
+    
+    $stmt_not_returned = mysqli_prepare($conn, $sql_not_returned);
+    mysqli_stmt_bind_param($stmt_not_returned, "s", $date);
+    mysqli_stmt_execute($stmt_not_returned);
+    $result_not_returned = mysqli_stmt_get_result($stmt_not_returned);
+    
+    while ($row = mysqli_fetch_assoc($result_not_returned)) {
+        $report['belum_dikumpulkan'][] = $row;
+    }
+    
+    // Get detailed activity
+    $sql_details = "SELECT 
+                    DATE_FORMAT(lt.transaction_time, '%Y-%m-%d %H:%i:%s') as time,
+                    lt.action,
+                    lt.status,
+                    lt.nis,
+                    s.name,
+                    s.class
+                  FROM laptop_transactions lt
+                  JOIN students s ON lt.nis = s.nis
+                  WHERE DATE(lt.transaction_time) = ?
+                  ORDER BY lt.transaction_time DESC";
+    
+    $stmt_details = mysqli_prepare($conn, $sql_details);
+    mysqli_stmt_bind_param($stmt_details, "s", $date);
+    mysqli_stmt_execute($stmt_details);
+    $result_details = mysqli_stmt_get_result($stmt_details);
+    
+    while ($row = mysqli_fetch_assoc($result_details)) {
+        // Format action and status
+        $action_display = $row['action'] == 'ambil' ? 'Ambil' : 'Kumpul';
+        if ($row['action'] == 'kumpul' && $row['status'] == 'terlambat') {
+            $action_display .= ' (Terlambat)';
         }
+        
+        $report['detail'][] = [
+            'time' => $row['time'],
+            'action' => $action_display,
+            'nis' => $row['nis'],
+            'name' => $row['name'],
+            'class' => $row['class']
+        ];
     }
     
     return $report;
 }
 
-// Ambil tanggal yang diminta atau gunakan hari ini
-$requestDate = $_GET['date'] ?? date('Y-m-d');
-$report = getDailyReport($requestDate);
-
-// Fungsi untuk format tanggal
-function formatDate($date) {
-    $timestamp = strtotime($date);
-    return date('d F Y', $timestamp);
-}
+$report = getDailyReport($conn, $requestDate);
 ?>
 
 <!DOCTYPE html>
@@ -215,5 +235,7 @@ function formatDate($date) {
             <?php endif; ?>
         </div>
     </div>
+    
+    <?php mysqli_close($conn); ?>
 </body>
 </html>

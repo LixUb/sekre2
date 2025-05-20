@@ -23,6 +23,7 @@
         <div class="action-buttons">
             <a href="?action=ambil" class="btn btn-success <?php echo (!isset($_GET['action']) || $_GET['action'] == 'ambil') ? 'active' : ''; ?>">Mode Pengambilan</a>
             <a href="?action=kumpul" class="btn btn-primary <?php echo (isset($_GET['action']) && $_GET['action'] == 'kumpul') ? 'active' : ''; ?>">Mode Pengumpulan</a>
+            <a href="report.php" class="btn btn-info">Lihat Laporan</a>
         </div>
 
         <div class="status-display">
@@ -51,22 +52,53 @@
                     </thead>
                     <tbody>
                         <?php
-                        if (file_exists('laptop_status.txt')) {
-                            $lines = file('laptop_status.txt', FILE_IGNORE_NEW_LINES);
-                            foreach ($lines as $line) {
-                                $data = explode('|', $line);
-                                if (count($data) >= 6) {
-                                    echo "<tr>";
-                                    echo "<td>{$data[0]}</td>"; // NIS
-                                    echo "<td>{$data[1]}</td>"; // Nama
-                                    echo "<td>{$data[2]}</td>"; // Kelas
-                                    echo "<td>{$data[3]}</td>"; // Status
-                                    echo "<td>{$data[4]}</td>"; // Waktu Ambil
-                                    echo "<td>{$data[5]}</td>"; // Waktu Kumpul
-                                    echo "</tr>";
+                        // Include database connection
+                        require_once 'config.php';
+
+                        // Query to get the latest laptop status for each student
+                        $sql = "SELECT s.nis, s.name, s.class, ls.status, 
+                                DATE_FORMAT(ls.take_time, '%Y-%m-%d %H:%i:%s') as take_time, 
+                                DATE_FORMAT(ls.return_time, '%Y-%m-%d %H:%i:%s') as return_time 
+                                FROM students s
+                                LEFT JOIN laptop_status ls ON s.nis = ls.nis
+                                ORDER BY 
+                                    CASE ls.status 
+                                        WHEN 'diambil' THEN 1 
+                                        WHEN 'dikumpul_terlambat' THEN 2
+                                        WHEN 'dikumpul' THEN 3
+                                        ELSE 4
+                                    END";
+
+                        $result = mysqli_query($conn, $sql);
+
+                        if (mysqli_num_rows($result) > 0) {
+                            while ($row = mysqli_fetch_assoc($result)) {
+                                echo "<tr>";
+                                echo "<td>{$row['nis']}</td>";
+                                echo "<td>{$row['name']}</td>";
+                                echo "<td>{$row['class']}</td>";
+                                
+                                // Format status for display
+                                $status_display = '';
+                                if ($row['status'] == 'diambil') {
+                                    $status_display = 'Diambil';
+                                } else if ($row['status'] == 'dikumpul') {
+                                    $status_display = 'Terkumpul';
+                                } else if ($row['status'] == 'dikumpul_terlambat') {
+                                    $status_display = 'Terkumpul (Terlambat)';
+                                } else {
+                                    $status_display = '-';
                                 }
+                                
+                                echo "<td>{$status_display}</td>";
+                                echo "<td>" . ($row['take_time'] ?? '-') . "</td>";
+                                echo "<td>" . ($row['return_time'] ?? '-') . "</td>";
+                                echo "</tr>";
                             }
+                        } else {
+                            echo "<tr><td colspan='6' class='text-center'>Tidak ada data</td></tr>";
                         }
+                        mysqli_close($conn);
                         ?>
                     </tbody>
                 </table>
