@@ -1,5 +1,4 @@
 <?php
-// Include database connection
 require_once 'config.php';
 
 $barcode = trim($_POST['barcode'] ?? '');
@@ -31,7 +30,7 @@ if (mysqli_num_rows($result) > 0) {
     $current_status = mysqli_fetch_assoc($result_status);
     
     if ($action == 'ambil') {
-        if ($currentTime < $minTimeAmbil) {
+        if ($currentTime == $minTimeAmbil) {
             $message = "❌ <span style='color:red;'>Pengambilan laptop hanya diperbolehkan mulai pukul 07:00!</span>";
         } else {
             if ($current_status && $current_status['status'] == 'diambil') {
